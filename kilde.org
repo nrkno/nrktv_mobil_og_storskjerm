@@ -1,0 +1,77 @@
+#+STARTUP: fold
+#+EXPORT_FILE_NAME: readme.org
+#+OPTIONS: date: nil
+#+OPTIONS: author: nil
+#+OPTIONS: title: NRK TV på mobil og storskjerm - hånd i hånd
+#+PROPERTY: header-args:python :session *Python* :tangle kode.py :comments both :eval never-export :exports both
+#+PROPERTY: header-args:bigquery :eval never-export :exports both :tangle mobil_og_storskjerm.sql :results table
+
+#+begin_src emacs-lisp :exports results :results none
+  ;; Dette gjør om bigquery-blokker til sql-blokker (for å få fargelegging på teksten)
+  ;; og fjerner results-nøkkelordet (som gjemmer resultatene på github)
+  (defun bytt-bigquery-til-sql (s backend info)
+    (replace-regexp-in-string "bigquery" "sql" s))
+
+  (defun fjern-resultatmerke (s backend info)
+    (replace-regexp-in-string "#\\+results:[ ]+" "" s))
+
+  (add-to-list 'org-export-filter-src-block-functions
+    	     'bytt-bigquery-til-sql)
+  (add-to-list 'org-export-filter-body-functions
+    	     'fjern-resultatmerke)
+#+end_src
+
+* Innledning
+Her skal jeg forsøke å sammenligne bruken av NRK TV på mobil og storskjerm. Hensikten er å gi innsikt i hva NRK TV-appen skal være på mobile enheter. Jeg skal sammenligne
+- antall besøk
+- antall skjermvisninger
+- påloggingsandel
+- når på døgnet aktiviteten er
+- hvilken type bruk som er typisk for plattformen
+
+
+Jeg skal også se på
+- hvor mange som er på logget begge plattformene
+
+
+Perioden jeg ser på er de siste tretti dagene.
+
+* Overordnede metrikker
+Jeg ser først på antall klienter og antall besøk på hver plattform.
+#+begin_src bigquery
+  #standardSQL
+  WITH
+    KILDE AS (
+      SELECT DISTINCT platform, sessionId, nrkUserId IS NOT NULL `pålogget`,
+  		    visitorId,
+  		    COUNTIF(previousViewId IS NULL) OVER(PARTITION BY sessionId ORDER BY firstTimeStamp) sub_sesjon
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+       WHERE partitionDate = CURRENT_DATE - 1
+         AND nrkService = 'nrktv'
+         AND platform IN ('mob','tv')
+         AND appId NOT IN ('no.nrk.nrktvapp.swift', 'no.nrk.goldendelicious.cdntest', 'no.nrk.NRK-Super')),
+
+    `BESØKSTYPE` AS (  
+      SELECT platform, sub_sesjon, sessionId, visitorId,
+             LOGICAL_OR(`pålogget`) OVER(PARTITION BY sessionId, sub_sesjon) `pålogget besøk`,
+        FROM KILDE),
+
+    OPPSUMMERING AS (
+      SELECT platform, sub_sesjon, COUNT(DISTINCT IF(`pålogget besøk`, sessionId, NULL)) `pålogget besøk`,
+             COUNT(DISTINCT sessionId) `besøk`
+        FROM `BESØKSTYPE`
+       GROUP BY ALL)
+
+  SELECT platform, `Antall klienter`, SUM(`besøk`) `Antall besøk`,
+         ROUND(SUM(`besøk`) / `Antall klienter`, 2) `Besøk per klient`,
+         ROUND(SUM(`pålogget besøk`) / SUM(`besøk`) * 100, 1) `Andel påloggede besøk i prosent`
+    FROM OPPSUMMERING
+         JOIN (SELECT platform, COUNT(DISTINCT visitorId) `Antall klienter` FROM `BESØKSTYPE` GROUP BY 1) USING(platform)
+   GROUP BY ALL
+#+end_src
+
+#+RESULTS:
+| platform | Antall klienter | Antall besøk | Besøk per klient | Andel påloggede besøk i prosent |
+|----------+-----------------+--------------+------------------+---------------------------------|
+| tv       |          423761 |       694399 |             1.64 |                            60.0 |
+| mob      |          185320 |       293798 |             1.59 |                            65.6 |
