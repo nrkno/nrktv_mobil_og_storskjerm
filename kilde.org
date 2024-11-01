@@ -62,7 +62,7 @@ Jeg ser først på antall klienter og antall besøk på hver plattform.
         FROM `BESØKSTYPE`
        GROUP BY ALL)
 
-  SELECT platform, `Antall klienter`, SUM(`besøk`) `Antall besøk`,
+  SELECT platform plattform, `Antall klienter`, SUM(`besøk`) `Antall besøk`,
          ROUND(SUM(`besøk`) / `Antall klienter`, 2) `Besøk per klient`,
          ROUND(SUM(`pålogget besøk`) / SUM(`besøk`) * 100, 1) `Andel påloggede besøk i prosent`
     FROM OPPSUMMERING
@@ -75,3 +75,59 @@ Jeg ser først på antall klienter og antall besøk på hver plattform.
 |----------+-----------------+--------------+------------------+---------------------------------|
 | tv       |          423761 |       694399 |             1.64 |                            60.0 |
 | mob      |          185320 |       293798 |             1.59 |                            65.6 |
+
+Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plattformene.
+
+#+begin_src bigquery
+  WITH
+  KILDE AS (
+SELECT platform, nrkUserId IS NOT NULL `pålogget`, sessionId, viewId,
+       COUNTIF(previousViewId IS NULL) OVER(PARTITION BY sessionId ORDER BY firstTimeStamp) sub_sesjon
+  FROM `nrk-datahub.snowplow_processed.views_v02`
+ WHERE partitionDate = CURRENT_DATE - 1
+   AND nrkService = 'nrktv'
+   AND platform IN ('mob','tv')
+   AND appId NOT IN ('no.nrk.nrktvapp.swift', 'no.nrk.goldendelicious.cdntest', 'no.nrk.NRK-Super')),
+
+  `BESØKSTYPE` AS (  
+    SELECT platform, sub_sesjon, sessionId, viewId,
+            LOGICAL_OR(`pålogget`) OVER(PARTITION BY sessionId, sub_sesjon) `pålogget besøk`,
+      FROM KILDE),
+
+  OPPSUMMERING AS (
+    SELECT platform, sub_sesjon, `pålogget besøk`, sessionId, COUNT(DISTINCT viewId) skjermvisninger,
+      FROM `BESØKSTYPE`
+      GROUP BY ALL),
+
+  KUM AS (
+  SELECT DISTINCT platform, `pålogget besøk`, skjermvisninger, --*,
+         COUNT(*) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) `kumulativ sum`,
+         COUNT(*) OVER(PARTITION BY platform, `pålogget besøk`) `Antall besøk`
+    FROM OPPSUMMERING),
+  
+  MED AS (
+  SELECT *,
+        --  IF(skjermvisninger IN (3, 7, 10),
+        --     CONCAT('[', 
+        --            ROUND(LAG(`kumulativ sum`) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) / 
+        --                  LAG(`Antall besøk`) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) * 100, 1),
+        --           ', ', ROUND(`kumulativ sum` / `Antall besøk` * 100, 1), ']'), NULL) intervall,
+         IF(skjermvisninger IN (3, 6, 8, 10),
+            ROUND(LAG(`kumulativ sum`) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) / 
+                         LAG(`Antall besøk`) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) * 100, 1), NULL) nedre
+        --  (LAG(`kumulativ sum`) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) < `Antall besøk` / 2) AND (`kumulativ sum` > `Antall besøk` / 2) median,
+        --  (LAG(`kumulativ sum`) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) < `Antall besøk` / 4 * 3) AND (`kumulativ sum` > `Antall besøk` / 4 * 3) `tredje kvartil`,
+        --  (LAG(`kumulativ sum`) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) < `Antall besøk` / 4) AND (`kumulativ sum` > `Antall besøk` / 4) `første kvartil`
+    FROM KUM)
+  
+  SELECT *
+    FROM MED
+   WHERE nedre IS NOT NULL
+   ORDER BY 1, 2
+--   SELECT platform, `pålogget besøk`, `Antall besøk`, --fk.skjermvisninger `første kvartil`,
+--    m.intervall median, --tk.skjermvisninger `tredje kvartil`
+--     FROM (SELECT platform, `pålogget besøk`, `Antall besøk`, intervall FROM MED WHERE intervall IS NOT NULL) m
+--         --  JOIN (SELECT platform, `pålogget besøk`, skjermvisninger FROM MED WHERE `første kvartil`) fk USING(platform, `pålogget besøk`)
+--         --  JOIN (SELECT platform, `pålogget besøk`, skjermvisninger FROM MED WHERE `tredje kvartil`) tk USING(platform, `pålogget besøk`)
+-- ORDER BY 1, 2
+#+end_src
