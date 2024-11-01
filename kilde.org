@@ -38,6 +38,8 @@ Perioden jeg ser på er de siste tretti dagene.
 
 * Overordnede metrikker
 Jeg ser først på antall klienter og antall besøk på hver plattform.
+
+Det er tilsynelatende sånn at det ikke alltid genereres en ny sessionId når et nytt besøk starter. Dette har jeg lagt merke til fordi det er en del tilfeller der det mangler flere previousViewId for samme sessionId. Jeg tolker dette som at det er et nytt besøk. Jeg har derfor lagt inn litt ekstra logikk for å telle med disse besøkene.
 #+begin_src bigquery
   #standardSQL
   WITH
