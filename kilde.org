@@ -80,7 +80,9 @@ Det er tilsynelatende sånn at det ikke alltid genereres en ny sessionId når et
 
 Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plattformene.
 
+#+name: kum_fordeling
 #+begin_src bigquery
+  #standardSQL
   WITH
     KILDE AS (
       SELECT platform, nrkUserId IS NOT NULL `pålogget`, sessionId, viewId,
@@ -106,4 +108,25 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
   		COUNT(*) OVER(PARTITION BY platform, `pålogget besøk`) `Antall besøk`
     FROM OPPSUMMERING
    ORDER BY 1, 2, 3
+#+end_src
+
+#+begin_src python
+  import pandas as pd
+  import matplotlib.pyplot as plt
+  import numpy as np
+  import pandas_gbq
+#+end_src
+
+#+begin_src python :noweb yes
+  spørring = """
+  <<kum_fordeling>>
+  """
+
+  df = pandas_gbq.read_gbq(spørring)
+#+end_src
+
+#+begin_src python
+  fig, ax = plt.subfigs(figsize=(9,11))
+  df["pst"] = df["kumulativ sum"] / df["Antall besøk"]
+  df.pivot(index="skjermvisninger", columns=["plattform","pålogget"], values="pst")
 #+end_src
