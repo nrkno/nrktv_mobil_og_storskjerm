@@ -145,3 +145,16 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
 
 #+RESULTS:
 [[file:figurer/navigasjonslengde.png]]
+
+Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
+
+#+begin_src bigquery
+  #standardSQL
+SELECT platform,TIME(timeFrame, 'Europe/Oslo'), TIME(EXTRACT(HOUR FROM TIME(timeFrame, 'Europe/Oslo')), CAST(20 * FLOOR(EXTRACT(MINUTE FROM TIME(timeFrame, 'Europe/Oslo')) / 20) AS INT64), 0), HLL_COUNT.MERGE(visitorsSketch) klienter
+  FROM `nrk-datahub.snowplow_aggregate.views_5min_v01`
+ WHERE partitionDate = CURRENT_DATE - 1
+   AND nrkService = 'nrktv'
+   AND platform IN ('mob','tv')
+ GROUP BY ALL
+ ORDER BY 1, 2
+#+end_src
