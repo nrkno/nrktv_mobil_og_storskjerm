@@ -127,12 +127,12 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
 #+end_src
 
 #+begin_src python :results silent
-  df["mediandiff"] = abs(df.pst - .5)
   df["pst"] = df["kumulativ sum"] / df["Antall besøk"]
+  df["mediandiff"] = abs(df.pst - .5)
   median=df[(df.mediandiff == df.groupby("platform").mediandiff.min().iloc[0]) | (df.mediandiff == df.groupby("platform").mediandiff.min().iloc[1])][["platform","skjermvisninger","pst"]].set_index("platform")
 #+end_src
 
-#+begin_src python :results graphics file value :file figurer/navigasjonslengde.png
+#+begin_src python :results graphics file output :file figurer/navigasjonslengde.png
   fig, ax = plt.subplots(figsize=(11,7))
   ax.set_xlim([0,40])
   ax.set_title("Kumulativ fordeling av antall skjermvisninger\n (jo flere skjermvisninger, dess mer tid brukt på navigasjon)")
@@ -141,7 +141,6 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
   ax.annotate("Etter to skjermvisninger er det en større\nandel påloggede enn ikke-påloggede.", xy=(2,.26), xytext=(10,.26), arrowprops=dict(arrowstyle="->", facecolor="black"))
   ax.annotate(f"For mob er det ca. {round(1 - median.loc["mob"].pst, 3) * 100} % som har {int(median.loc["mob"].skjermvisninger)} eller flere skjermvisninger,\nmens det på tv er ca. {round(1 - median.loc["tv"].pst, 3) * 100} % som har {int(median.loc["tv"].skjermvisninger)} eller flere skjermvisninger.\nDet betyr at det navigeres litt mer på mobil enn på tv.", xy=(median.loc["mob"].skjermvisninger, median.loc["mob"].pst), xytext=(10,.6), arrowprops=dict(arrowstyle="->", facecolor="black"))
   df.pivot(index="skjermvisninger", columns=["platform","pålogget besøk"], values="pst").plot(ax=ax, marker="o")
-  plt.show()
 #+end_src
 
 #+RESULTS:
