@@ -1,0 +1,159 @@
+# Created 2024-11-06 on. 15:14
+#+options: date: nil
+#+options: author: nil
+#+options: title: NRK TV på mobil og storskjerm - hånd i hånd
+#+title: 
+#+author: Emil
+#+startup: fold
+#+export_file_name: readme.org
+#+property: header-args:python :session *Python* :tangle kode.py :comments both :eval never-export :exports both
+#+property: header-args:bigquery :eval never-export :exports both :tangle mobil_og_storskjerm.sql :results table
+* Innledning
+Her skal jeg forsøke å sammenligne bruken av NRK TV på mobil og storskjerm. Hensikten er å gi innsikt i hva NRK TV-appen skal være på mobile enheter. Jeg skal sammenligne
+- antall besøk
+- antall skjermvisninger
+- påloggingsandel
+- når på døgnet aktiviteten er
+- hvilken type bruk som er typisk for plattformen
+
+
+Jeg skal også se på
+- hvor mange som er på logget begge plattformene
+
+
+Perioden jeg ser på er de siste tretti dagene.
+* Overordnede metrikker
+Jeg ser først på antall klienter og antall besøk på hver plattform.
+
+Det er tilsynelatende sånn at det ikke alltid genereres en ny sessionId når et nytt besøk starter. Dette har jeg lagt merke til fordi det er en del tilfeller der det mangler flere previousViewId for samme sessionId. Jeg tolker dette som at det er et nytt besøk. Jeg har derfor lagt inn litt ekstra logikk for å telle med disse besøkene.
+#+begin_src sql
+  #standardSQL
+  WITH
+    KILDE AS (
+      SELECT DISTINCT platform, sessionId, nrkUserId IS NOT NULL `pålogget`,
+                      visitorId,
+                      COUNTIF(previousViewId IS NULL) OVER(PARTITION BY sessionId ORDER BY firstTimeStamp) sub_sesjon
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+       WHERE partitionDate = CURRENT_DATE - 1
+         AND nrkService = 'nrktv'
+         AND platform IN ('mob','tv')
+         AND appId NOT IN ('no.nrk.nrktvapp.swift', 'no.nrk.goldendelicious.cdntest', 'no.nrk.NRK-Super')),
+
+    `BESØKSTYPE` AS (  
+      SELECT platform, sub_sesjon, sessionId, visitorId,
+             LOGICAL_OR(`pålogget`) OVER(PARTITION BY sessionId, sub_sesjon) `pålogget besøk`,
+        FROM KILDE),
+
+    OPPSUMMERING AS (
+      SELECT platform, sub_sesjon, COUNT(DISTINCT IF(`pålogget besøk`, sessionId, NULL)) `pålogget besøk`,
+             COUNT(DISTINCT sessionId) `besøk`
+        FROM `BESØKSTYPE`
+       GROUP BY ALL)
+
+  SELECT platform plattform, `Antall klienter`, SUM(`besøk`) `Antall besøk`,
+         ROUND(SUM(`besøk`) / `Antall klienter`, 2) `Besøk per klient`,
+         ROUND(SUM(`pålogget besøk`) / SUM(`besøk`) * 100, 1) `Andel påloggede besøk i prosent`
+    FROM OPPSUMMERING
+         JOIN (SELECT platform, COUNT(DISTINCT visitorId) `Antall klienter` FROM `BESØKSTYPE` GROUP BY 1) USING(platform)
+   GROUP BY ALL
+#+end_src
+
+
+| platform | Antall klienter | Antall besøk | Besøk per klient | Andel påloggede besøk i prosent |
+|----------+-----------------+--------------+------------------+---------------------------------|
+| tv       |          423761 |       694399 |             1.64 |                            60.0 |
+| mob      |          185320 |       293798 |             1.59 |                            65.6 |
+
+Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plattformene.
+
+#+name: kum_fordeling
+#+begin_src sql
+  #standardSQL
+  WITH
+    KILDE AS (
+      SELECT platform, nrkUserId IS NOT NULL `pålogget`, sessionId, viewId,
+             COUNTIF(previousViewId IS NULL) OVER(PARTITION BY sessionId ORDER BY firstTimeStamp) sub_sesjon
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+       WHERE partitionDate = CURRENT_DATE - 1
+         AND nrkService = 'nrktv'
+         AND platform IN ('mob','tv')
+         AND appId NOT IN ('no.nrk.nrktvapp.swift', 'no.nrk.goldendelicious.cdntest', 'no.nrk.NRK-Super')),
+
+    `BESØKSTYPE` AS (  
+      SELECT platform, sub_sesjon, sessionId, viewId,
+             LOGICAL_OR(`pålogget`) OVER(PARTITION BY sessionId, sub_sesjon) `pålogget besøk`,
+        FROM KILDE),
+
+    OPPSUMMERING AS (
+      SELECT platform, sub_sesjon, `pålogget besøk`, sessionId, COUNT(DISTINCT viewId) skjermvisninger,
+        FROM `BESØKSTYPE`
+       GROUP BY ALL)
+
+  SELECT DISTINCT platform, `pålogget besøk`, skjermvisninger,
+                  COUNT(*) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) `kumulativ sum`,
+                  COUNT(*) OVER(PARTITION BY platform, `pålogget besøk`) `Antall besøk`
+    FROM OPPSUMMERING
+   ORDER BY 1, 2, 3
+#+end_src
+
+#+begin_src python
+  import pandas as pd
+  import matplotlib.pyplot as plt
+  from matplotlib.path import Path
+  import numpy as np
+  import pandas_gbq
+#+end_src
+
+#+begin_src python
+  spørring = """
+  #standardSQL
+  WITH
+    KILDE AS (
+      SELECT platform, nrkUserId IS NOT NULL `pålogget`, sessionId, viewId,
+             COUNTIF(previousViewId IS NULL) OVER(PARTITION BY sessionId ORDER BY firstTimeStamp) sub_sesjon
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+       WHERE partitionDate = CURRENT_DATE - 1
+         AND nrkService = 'nrktv'
+         AND platform IN ('mob','tv')
+         AND appId NOT IN ('no.nrk.nrktvapp.swift', 'no.nrk.goldendelicious.cdntest', 'no.nrk.NRK-Super')),
+
+    `BESØKSTYPE` AS (  
+      SELECT platform, sub_sesjon, sessionId, viewId,
+             LOGICAL_OR(`pålogget`) OVER(PARTITION BY sessionId, sub_sesjon) `pålogget besøk`,
+        FROM KILDE),
+
+    OPPSUMMERING AS (
+      SELECT platform, sub_sesjon, `pålogget besøk`, sessionId, COUNT(DISTINCT viewId) skjermvisninger,
+        FROM `BESØKSTYPE`
+       GROUP BY ALL)
+
+  SELECT DISTINCT platform, `pålogget besøk`, skjermvisninger,
+                  COUNT(*) OVER(PARTITION BY platform, `pålogget besøk` ORDER BY skjermvisninger) `kumulativ sum`,
+                  COUNT(*) OVER(PARTITION BY platform, `pålogget besøk`) `Antall besøk`
+    FROM OPPSUMMERING
+   ORDER BY 1, 2, 3
+  """
+
+  df = pandas_gbq.read_gbq(spørring)
+#+end_src
+
+#+begin_src python
+  df["mediandiff"] = abs(df.pst - .5)
+  df["pst"] = df["kumulativ sum"] / df["Antall besøk"]
+  median=df[(df.mediandiff == df.groupby("platform").mediandiff.min().iloc[0]) | (df.mediandiff == df.groupby("platform").mediandiff.min().iloc[1])][["platform","skjermvisninger","pst"]].set_index("platform")
+#+end_src
+
+#+begin_src python
+  fig, ax = plt.subplots(figsize=(11,7))
+  ax.set_xlim([0,40])
+  ax.set_title("Kumulativ fordeling av antall skjermvisninger\n (jo flere skjermvisninger, dess mer tid brukt på navigasjon)")
+  ax.annotate("Påloggede og ikke-påloggede brukere\nskiller seg lite fra hverandre innad\ni plattformen fom. fire skjermvisninger", xy=(4,.4), xytext=(15,.4), arrowprops=dict(arrowstyle="->", facecolor="black"), va="bottom", ha="left")
+  ax.annotate("", xy=(4,.48), xytext=(15,.4), arrowprops=dict(arrowstyle="->", facecolor="black"))
+  ax.annotate("Etter to skjermvisninger er det en større\nandel påloggede enn ikke-påloggede.", xy=(2,.26), xytext=(10,.26), arrowprops=dict(arrowstyle="->", facecolor="black"))
+  ax.annotate(f"For mob er det ca. {round(1 - median.loc["mob"].pst, 3) * 100} % som har {int(median.loc["mob"].skjermvisninger)} eller flere skjermvisninger,\nmens det på tv er ca. {round(1 - median.loc["tv"].pst, 3) * 100} % som har {int(median.loc["tv"].skjermvisninger)} eller flere skjermvisninger.\nDet betyr at det navigeres litt mer på mobil enn på tv.", xy=(median.loc["mob"].skjermvisninger, median.loc["mob"].pst), xytext=(10,.6), arrowprops=dict(arrowstyle="->", facecolor="black"))
+  df.pivot(index="skjermvisninger", columns=["platform","pålogget besøk"], values="pst").plot(ax=ax, marker="o")
+  plt.show()
+#+end_src
+
+
+[[file:figurer/navigasjonslengde.png]]
