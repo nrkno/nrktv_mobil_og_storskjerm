@@ -110,10 +110,13 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
    ORDER BY 1, 2, 3
 #+end_src
 
-#+begin_src python :results silent
+#+begin_src python
   import pandas as pd
   import matplotlib.pyplot as plt
   from matplotlib.path import Path
+  import matplotlib.dates as mdates
+  from matplotlib.ticker import FixedLocator
+  from matplotlib.dates import DateFormatter
   import numpy as np
   import pandas_gbq
 #+end_src
@@ -164,3 +167,52 @@ Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
    GROUP BY ALL
    ORDER BY 1, 2
 #+end_src
+
+#+begin_src python :noweb yes
+  spørring = """
+  <<tidspunkt>>
+  """
+
+  df_tp = pandas_gbq.read_gbq(spørring)
+  df_tp["tidspunkt"] = pd.to_datetime(df_tp.tidspunkt, format="%H:%M:%S")
+  df_tp["andel_klienter"] = (df_tp.set_index("platform")["klienter"] /
+                             df_tp.groupby("platform")["klienter"].sum()).values
+#+end_src
+
+#+begin_src python
+  def tidsplot(df, verdier):      
+      fig, ax = plt.subplots(figsize=(11,7))
+      ax.xaxis.set_major_locator(mdates.HourLocator(range(0, 24, 3)))
+      ax.xaxis.set_minor_locator(mdates.MinuteLocator(range(0, 60, 20)))
+      ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+      plot_df = df.pivot(index="tidspunkt",
+                         columns="platform",
+                         values=verdier)
+      ax.plot(plot_df.index, plot_df.mob, label="mob")
+      ax.plot(plot_df.index, plot_df.tv, label="tv")
+      ax.legend()
+      return (plot_df, ax)
+#+end_src
+
+#+RESULTS:
+: None
+
+#+begin_src python :results graphics file output :file figurer/tidspunkt.png
+  pil = dict(arrowstyle="->", facecolor="black")
+  plot_df, ax = tidsplot(df_tp, "klienter")
+  ax.set_title("Antall klienter gjennom døgnet i 20 minutters intervaller")
+  ax.annotate(f"Mellom kl. {plot_df[plot_df.mob>plot_df.tv].index.min().strftime("%H:%M")} og kl. {plot_df[plot_df.mob>plot_df.tv].index.max().strftime("%H:%M")}\ner det flere besøk fra mob-klienter\nenn tv-klienter.",
+              xy=(plot_df[plot_df.mob>plot_df.tv].index.min(),plot_df.loc[plot_df[plot_df.mob>plot_df.tv].index.min()].mob),
+              xytext=(pd.to_datetime("01:00", format="%H:%M"), 30000), arrowprops=pil)
+#+end_src
+
+#+RESULTS:
+[[file:figurer/tidspunkt.png]]
+
+#+begin_src python :results graphics file output :file figurer/tidspunkt_andeler.png
+  ax = tidsplot(df_tp, "andel_klienter")
+  ax.set_title("Fordeling av klienter gjennom døgnet i 20 minutters intervaller")
+#+end_src
+
+#+RESULTS:
+[[file:figurer/tidspunkt_andeler.png]]
