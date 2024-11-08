@@ -3,7 +3,7 @@
 #+OPTIONS: date: nil
 #+OPTIONS: author: nil
 #+OPTIONS: title: NRK TV på mobil og storskjerm - hånd i hånd
-#+PROPERTY: header-args:python :session *Python* :tangle kode.py :comments both :eval never-export :exports both
+#+PROPERTY: header-args:python :session *Python* :tangle kode.py :comments both :eval never-export :exports both :results silent
 #+PROPERTY: header-args:bigquery :eval never-export :exports both :tangle mobil_og_storskjerm.sql :results table
 
 #+begin_src emacs-lisp :exports results :results none
@@ -118,7 +118,7 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
   import pandas_gbq
 #+end_src
 
-#+begin_src python :noweb yes :results silent
+#+begin_src python :noweb yes
   spørring = """
   <<kum_fordeling>>
   """
@@ -126,7 +126,7 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
   df = pandas_gbq.read_gbq(spørring)
 #+end_src
 
-#+begin_src python :results silent
+#+begin_src python
   df["pst"] = df["kumulativ sum"] / df["Antall besøk"]
   df["mediandiff"] = abs(df.pst - .5)
   median=df[(df.mediandiff == df.groupby("platform").mediandiff.min().iloc[0]) | (df.mediandiff == df.groupby("platform").mediandiff.min().iloc[1])][["platform","skjermvisninger","pst"]].set_index("platform")
