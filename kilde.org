@@ -222,7 +222,7 @@ Jeg går videre med å finne ut hva de vanligste navigasjonsmønstrne er på de 
 #+begin_src bigquery
 WITH
   VISNING AS (
-  SELECT DISTINCT viewId, previousViewId, nrkUserId IS NOT NULL `pålogget`, userOrProfile, 
+  SELECT DISTINCT viewId, previousViewId, nrkUserId IS NOT NULL `pålogget`, userOrProfile, platform, appId,
          IF(appId IN ('no.nrk.tv.smart-tv', 'no.nrk.tv.web'),
            CASE
              WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'direkte' AND SPLIT(page.path, '/')[SAFE_OFFSET(3)] = 'avspiller' THEN 
@@ -279,21 +279,30 @@ WITH
          COUNT(DISTINCT sessionId) antall
     FROM `nrk-datahub.snowplow_processed.views_v02`
          LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
-         LEFT JOIN (SELECT viewId, secondsConsumed FROM `nrk-datahub.snowplow_processed.playback_v02` WHERE partitionDate = CURRENT_DATE - 2) p USING(viewId)
-         LEFT JOIN (SELECT viewId, COUNT(DISTINCT plugOrLinkTitle) inntrykk, COUNT(DISTINCT IF(clicked IS NOT NULL, plugOrLinkTitle, NULL)) klikk FROM `nrk-datahub.snowplow_processed.impressions_v02`  WHERE partitionDate = CURRENT_DATE - 2 GROUP BY ALL) i USING(viewId)
+         LEFT JOIN (SELECT viewId, secondsConsumed FROM `nrk-datahub.snowplow_processed.playback_v02` WHERE partitionDate = CURRENT_DATE - 2 AND nrkService = 'nrktv') p USING(viewId)
+         LEFT JOIN (SELECT viewId, COUNT(DISTINCT plugOrLinkTitle) inntrykk, COUNT(DISTINCT IF(clicked IS NOT NULL, plugOrLinkTitle, NULL)) klikk FROM `nrk-datahub.snowplow_processed.impressions_v02`  WHERE partitionDate = CURRENT_DATE - 2 AND nrkService = 'nrktv' GROUP BY ALL) i USING(viewId)
    WHERE partitionDate = CURRENT_DATE - 2
      AND nrkService = 'nrktv'
      AND platform IN ('mob', 'tv')
-     GROUP BY ALL)
+     GROUP BY ALL),
 
-  SELECT DISTINCT sessionId, firstTimeStamp,
+  STIER AS (
+  SELECT platform,
          TIME(TIMESTAMP_SECONDS(CAST(FLOOR(UNIX_SECONDS(firstTimeStamp) / 1200) * 1200 AS INT64)), 'Europe/Oslo') tidspunkt,
          userOrProfile, v1.skjerm visning1, v2.skjerm visning2, v3.skjerm visning3, 
-         LOGICAL_OR(`pålogget`) OVER(PARTITION BY sessionId, v1.sub_sesjon) `pålogget besøk`,
+         LOGICAL_OR(`pålogget`) OVER(PARTITION BY v1.sessionId, v1.sub_sesjon) `pålogget besøk`,
          IFNULL(v1.secondsConsumed, 0) + IFNULL(v2.secondsConsumed, 0) + IFNULL(v3.secondsConsumed, 0) secondsConsumed, IFNULL(v1.inntrykk, 0) + IFNULL(v2.inntrykk, 0) + IFNULL(v3.inntrykk, 0) inntrykk, IFNULL(v1.klikk, 0) + IFNULL(v2.klikk, 0) + IFNULL(v3.klikk, 0) klikk,
-
     FROM VISNING v1
-         LEFT JOIN (SELECT viewId, sub_sesjon, previousViewId, skjerm, inntrykk, klikk, secondsConsumed FROM VISNING) v2 ON v1.viewId = v2.previousViewId AND v1.sub_sesjon = v2.sub_sesjon
-         LEFT JOIN (SELECT viewId, sub_sesjon, previousViewId, skjerm, inntrykk, klikk, secondsConsumed FROM VISNING) v3 ON v2.viewId = v3.previousViewId AND v2.sub_sesjon = v3.sub_sesjon
-     ORDER BY 1, firstTimeStamp
+         LEFT JOIN (SELECT sessionId, viewId, sub_sesjon, previousViewId, skjerm, inntrykk, klikk, secondsConsumed FROM VISNING) v2 ON v1.viewId = v2.previousViewId AND v1.sub_sesjon = v2.sub_sesjon AND v1.sessionId = v2.sessionId
+         LEFT JOIN (SELECT sessionId, viewId, sub_sesjon, previousViewId, skjerm, inntrykk, klikk, secondsConsumed FROM VISNING) v3 ON v2.viewId = v3.previousViewId AND v2.sub_sesjon = v3.sub_sesjon AND v2.sessionId = v3.sessionId
+  )
+  
+  SELECT platform, tidspunkt, `pålogget besøk`, --visning1, visning2, visning3,
+         CONCAT(visning1, ' > ', visning2, ' > ', visning3) sti,
+         SUM(secondsConsumed) `Totalt konsum`, SUM(inntrykk) `Totalt inntrykk`, SUM(klikk) `Totalt klikk`, COUNT(*) Antall
+    FROM STIER
+   WHERE visning2 IS NOT NULL
+     AND visning3 IS NOT NULL
+   GROUP BY ALL
+   ORDER BY Antall DESC
 #+end_src
