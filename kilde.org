@@ -313,3 +313,41 @@ Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
 #+RESULTS:
 [[file:figurer/tidspunkt_andeler.png]]
 
+* Mobilen som fjernkontroll
+Er NRK TV på mobilen bare et verktøy for å spille av innhold på storskjerm? Fungerer egentlig mobilen bare som en fjernkontroll for NRK TV? La meg finne det ut.
+
+#+begin_src bigquery
+  #standardSQL
+  
+#+end_src
+
+* Appendix
+I løpet av arbeidet har jeg følt behov for å sortere datane i rekkefølgen av etterfølgende viewId-er. Til dette har jeg brukt en rekursiv spørring.
+#+begin_src bigquery
+  WITH RECURSIVE
+    EKSEMPELDATA AS (
+      -- SELECT DISTINCT view.id visning, view.previousId forrige_visning
+      --   FROM `nrk-datahub.snowplow_processed.events_v03`
+      -- WHERE partitionDate = CURRENT_DATE - 2
+      --   AND nrkService = 'nrktv'
+      --   AND session.id = '000001c6-8b17-4465-abf7-8fccede1a2f5'
+      --   AND view.previousId IS NOT NULL
+      SELECT viewId visning, previousViewId forrige_visning, mobileViewName,
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+       WHERE partitionDate = CURRENT_DATE - 2
+         AND sessionId IN ('e338d8a9-8609-446a-88b7-62102a448c6c', '000001c6-8b17-4465-abf7-8fccede1a2f5')
+         AND nrkService = 'nrktv'
+    ),
+
+    VISNINGER AS (
+      (SELECT visning visningsid, 1 visningsnummer, mobileViewName FROM EKSEMPELDATA WHERE forrige_visning = '69B376A7-D292-402A-8734-190A409D2EF4')
+      UNION ALL
+      (SELECT visning, visningsnummer + 1 visningsnummer, e.mobileViewName
+         FROM VISNINGER v
+              JOIN EKSEMPELDATA e ON (v.visningsid = e.forrige_visning))
+    )
+
+  SELECT *
+    FROM VISNINGER
+   ORDER BY 2
+#+end_src
