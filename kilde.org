@@ -28,6 +28,9 @@ Her skal jeg forsøke å sammenligne bruken av NRK TV på mobil og storskjerm. H
 - påloggingsandel
 - når på døgnet aktiviteten er
 - hvilken type bruk som er typisk for plattformen
+  - tid brukt på å spille av innhold
+  - andelen fornøyde avspillinger
+  - er mobilen bare en fjernkontroll?
 
 
 Jeg skal også se på
@@ -78,6 +81,7 @@ Det er tilsynelatende sånn at det ikke alltid genereres en ny sessionId når et
 | tv       |          423761 |       694399 |             1.64 |                            60.0 |
 | mob      |          185320 |       293798 |             1.59 |                            65.6 |
 
+* Navigasjon
 Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plattformene.
 
 #+name: kum_fordeling
@@ -149,74 +153,7 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
 #+RESULTS:
 [[file:figurer/navigasjonslengde.png]]
 
-Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
-
-#+name: tidspunkt
-#+begin_src bigquery
-    #standardSQL
-  SELECT platform,
-         TIME(EXTRACT(HOUR FROM TIME(timeFrame, 'Europe/Oslo')),
-  	    CAST(20 * FLOOR(
-  	         EXTRACT(MINUTE FROM TIME(timeFrame, 'Europe/Oslo')) / 20) AS INT64),
-  	    0) tidspunkt,
-         HLL_COUNT.MERGE(visitorsSketch) klienter
-    FROM `nrk-datahub.snowplow_aggregate.views_5min_v01`
-   WHERE partitionDate = CURRENT_DATE - 1
-     AND nrkService = 'nrktv'
-     AND platform IN ('mob','tv')
-   GROUP BY ALL
-   ORDER BY 1, 2
-#+end_src
-
-#+begin_src python :noweb yes
-  spørring = """
-  <<tidspunkt>>
-  """
-
-  df_tp = pandas_gbq.read_gbq(spørring)
-  df_tp["tidspunkt"] = pd.to_datetime(df_tp.tidspunkt, format="%H:%M:%S")
-  df_tp["andel_klienter"] = (df_tp.set_index("platform")["klienter"] /
-                             df_tp.groupby("platform")["klienter"].sum()).values
-#+end_src
-
-#+begin_src python
-  def tidsplot(df, verdier):      
-      fig, ax = plt.subplots(figsize=(11,7))
-      ax.xaxis.set_major_locator(mdates.HourLocator(range(0, 24, 3)))
-      ax.xaxis.set_minor_locator(mdates.MinuteLocator(range(0, 60, 20)))
-      ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-      plot_df = df.pivot(index="tidspunkt",
-                         columns="platform",
-                         values=verdier)
-      ax.plot(plot_df.index, plot_df.mob, label="mob")
-      ax.plot(plot_df.index, plot_df.tv, label="tv")
-      ax.legend()
-      return (plot_df, ax)
-#+end_src
-
-#+RESULTS:
-: None
-
-#+begin_src python :results graphics file output :file figurer/tidspunkt.png
-  pil = dict(arrowstyle="->", facecolor="black")
-  plot_df, ax = tidsplot(df_tp, "klienter")
-  ax.set_title("Antall klienter gjennom døgnet i 20 minutters intervaller")
-  ax.annotate(f"Mellom kl. {plot_df[plot_df.mob>plot_df.tv].index.min().strftime("%H:%M")} og kl. {plot_df[plot_df.mob>plot_df.tv].index.max().strftime("%H:%M")}\ner det flere besøk fra mob-klienter\nenn tv-klienter.",
-              xy=(plot_df[plot_df.mob>plot_df.tv].index.min(),plot_df.loc[plot_df[plot_df.mob>plot_df.tv].index.min()].mob),
-              xytext=(pd.to_datetime("01:00", format="%H:%M"), 30000), arrowprops=pil)
-#+end_src
-
-#+RESULTS:
-[[file:figurer/tidspunkt.png]]
-
-#+begin_src python :results graphics file output :file figurer/tidspunkt_andeler.png
-  ax = tidsplot(df_tp, "andel_klienter")
-  ax.set_title("Fordeling av klienter gjennom døgnet i 20 minutters intervaller")
-#+end_src
-
-#+RESULTS:
-[[file:figurer/tidspunkt_andeler.png]]
-
+** Navigasjonsmønstre
 Jeg går videre med å finne ut hva de vanligste navigasjonsmønstrne er på de ulike plattformene. Til dette tar jeg utgangspunkt i en spørring jeg har fra arbeidet med direktesidene.
 
 #+begin_src bigquery
@@ -306,3 +243,73 @@ WITH
    GROUP BY ALL
    ORDER BY Antall DESC
 #+end_src
+
+* Aktivitetsmønster
+Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
+
+#+name: tidspunkt
+#+begin_src bigquery
+    #standardSQL
+  SELECT platform,
+         TIME(EXTRACT(HOUR FROM TIME(timeFrame, 'Europe/Oslo')),
+  	    CAST(20 * FLOOR(
+  	         EXTRACT(MINUTE FROM TIME(timeFrame, 'Europe/Oslo')) / 20) AS INT64),
+  	    0) tidspunkt,
+         HLL_COUNT.MERGE(visitorsSketch) klienter
+    FROM `nrk-datahub.snowplow_aggregate.views_5min_v01`
+   WHERE partitionDate = CURRENT_DATE - 1
+     AND nrkService = 'nrktv'
+     AND platform IN ('mob','tv')
+   GROUP BY ALL
+   ORDER BY 1, 2
+#+end_src
+
+#+begin_src python :noweb yes
+  spørring = """
+  <<tidspunkt>>
+  """
+
+  df_tp = pandas_gbq.read_gbq(spørring)
+  df_tp["tidspunkt"] = pd.to_datetime(df_tp.tidspunkt, format="%H:%M:%S")
+  df_tp["andel_klienter"] = (df_tp.set_index("platform")["klienter"] /
+                             df_tp.groupby("platform")["klienter"].sum()).values
+#+end_src
+
+#+begin_src python
+  def tidsplot(df, verdier):      
+      fig, ax = plt.subplots(figsize=(11,7))
+      ax.xaxis.set_major_locator(mdates.HourLocator(range(0, 24, 3)))
+      ax.xaxis.set_minor_locator(mdates.MinuteLocator(range(0, 60, 20)))
+      ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+      plot_df = df.pivot(index="tidspunkt",
+                         columns="platform",
+                         values=verdier)
+      ax.plot(plot_df.index, plot_df.mob, label="mob")
+      ax.plot(plot_df.index, plot_df.tv, label="tv")
+      ax.legend()
+      return (plot_df, ax)
+#+end_src
+
+#+RESULTS:
+: None
+
+#+begin_src python :results graphics file output :file figurer/tidspunkt.png
+  pil = dict(arrowstyle="->", facecolor="black")
+  plot_df, ax = tidsplot(df_tp, "klienter")
+  ax.set_title("Antall klienter gjennom døgnet i 20 minutters intervaller")
+  ax.annotate(f"Mellom kl. {plot_df[plot_df.mob>plot_df.tv].index.min().strftime("%H:%M")} og kl. {plot_df[plot_df.mob>plot_df.tv].index.max().strftime("%H:%M")}\ner det flere besøk fra mob-klienter\nenn tv-klienter.",
+              xy=(plot_df[plot_df.mob>plot_df.tv].index.min(),plot_df.loc[plot_df[plot_df.mob>plot_df.tv].index.min()].mob),
+              xytext=(pd.to_datetime("01:00", format="%H:%M"), 30000), arrowprops=pil)
+#+end_src
+
+#+RESULTS:
+[[file:figurer/tidspunkt.png]]
+
+#+begin_src python :results graphics file output :file figurer/tidspunkt_andeler.png
+  ax = tidsplot(df_tp, "andel_klienter")
+  ax.set_title("Fordeling av klienter gjennom døgnet i 20 minutters intervaller")
+#+end_src
+
+#+RESULTS:
+[[file:figurer/tidspunkt_andeler.png]]
+
