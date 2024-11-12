@@ -328,13 +328,63 @@ Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
 [[file:figurer/tidspunkt_andeler.png]]
 
 * Mobilen som fjernkontroll
-Er NRK TV på mobilen bare et verktøy for å spille av innhold på storskjerm? Fungerer egentlig mobilen bare som en fjernkontroll for NRK TV? La meg finne det ut.
+Er NRK TV på mobilen bare et verktøy for å spille av innhold på storskjerm? Fungerer egentlig mobilen bare som en fjernkontroll for NRK TV? La meg finne det ut. Denne spørringen gir tall for de siste syv dagene.
 
 #+begin_src bigquery
   #standardSQL
-  
+  WITH
+    GRUNNLAG AS (
+      SELECT sessionId, visitorId,
+             CASE
+               WHEN mobileViewName = 'chromecastRemote' THEN 'cast'
+               WHEN avspilling THEN 'avspilling'
+             END type
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+             LEFT JOIN (SELECT viewId, true avspilling
+                          FROM `nrk-datahub.snowplow_processed.playback_v02`
+                         WHERE partitionDate >= CURRENT_DATE - 7
+                           AND nrkService = 'nrktv') USING(viewId)
+       WHERE partitionDate >= CURRENT_DATE - 7
+         AND nrkService = 'nrktv'),
+
+    METRIKKER1 AS (
+      SELECT 1 nr, 'besøk' benevning,
+  	   COUNT(DISTINCT sessionId) Antall,
+  	   COUNT(DISTINCT IF(type = 'cast', sessionId, NULL)) casting,
+  	   COUNT(DISTINCT IF(type = 'avspilling', sessionId, NULL)) avspilling, 
+        FROM GRUNNLAG
+       UNION ALL
+      SELECT 2, 'klienter',
+  	   COUNT(DISTINCT visitorId),
+  	   COUNT(DISTINCT IF(type = 'cast', visitorId, NULL)),
+  	   COUNT(DISTINCT IF(type = 'avspilling', visitorId, NULL))
+        FROM GRUNNLAG
+       UNION ALL
+      SELECT 3, 'besøk / klienter',
+  	   COUNT(DISTINCT sessionId) / COUNT(DISTINCT visitorId),
+  	   COUNT(DISTINCT IF(type = 'cast', sessionId, NULL)) /
+  	     COUNT(DISTINCT IF(type = 'cast', visitorId, NULL)),
+  	   COUNT(DISTINCT IF(type = 'avspilling', sessionId, NULL)) /
+  	     COUNT(DISTINCT IF(type = 'avspilling', visitorId, NULL))
+        FROM GRUNNLAG)
+
+    SELECT benevning, ROUND(Antall, 2) Antall,
+           ROUND(casting, 2) casting,
+           ROUND(avspilling, 2) avspilling,
+           ROUND(casting / Antall, 3) `Andel casting`,
+           ROUND(avspilling / Antall, 2) `Andel avspilling`
+      FROM METRIKKER1
+     ORDER BY nr
 #+end_src
 
+#+RESULTS:
+| benevning        |     Antall |  casting | avspilling | Andel casting | Andel avspilling |
+|------------------+------------+----------+------------+---------------+------------------|
+| besøk            | 10030639.0 | 176263.0 |  6592479.0 |         0.018 |             0.66 |
+| klienter         |  3000407.0 |  57919.0 |  1914681.0 |         0.019 |             0.64 |
+| besøk / klienter |       3.34 |     3.04 |       3.44 |          0.91 |             1.03 |
+
+I løpet av en syvdagers periode er det kun 1,8 % av besøkene som caster, og 1,9 % av klientene brukes til casting avfærre besøk per klient som går til casting enn totalt antall besøk per klient
 * Appendix
 I løpet av arbeidet har jeg følt behov for å sortere datane i rekkefølgen av etterfølgende viewId-er. Til dette har jeg brukt en rekursiv spørring.
 #+begin_src bigquery
