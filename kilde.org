@@ -15,10 +15,24 @@
   (defun fjern-resultatmerke (s backend info)
     (replace-regexp-in-string "#\\+results:[ ]+" "" s))
 
+  (defun tusenskille-og-komma (s backend info)
+    (let ((num (number-to-string 1234567.891011)))
+      (string-match "\\([0-9]+\\)\\.\\([0-9]+\\)" num)
+      (let ((hel (match-string 1 num))
+  	  (dec (match-string 2 num)))
+        (while (string-match "\\(.*[0-9]\\)\\([0-9][0-9][0-9].*\\)" hel)
+  	(setq hel (concat
+  		   (match-string 1 hel) " "
+  		   (match-string 2 hel))))
+        (concat hel "," dec))))
+
   (add-to-list 'org-export-filter-src-block-functions
-    	     'bytt-bigquery-til-sql)
+      	     'bytt-bigquery-til-sql)
   (add-to-list 'org-export-filter-body-functions
-    	     'fjern-resultatmerke)
+      	     'fjern-resultatmerke)
+  (add-to-list 'org-export-filter-table-functions
+     	     'tusenskille-og-komma)
+
 #+end_src
 
 * Innledning
