@@ -371,8 +371,8 @@ Er NRK TV på mobilen bare et verktøy for å spille av innhold på storskjerm? 
     SELECT benevning, ROUND(Antall, 2) Antall,
            ROUND(casting, 2) casting,
            ROUND(avspilling, 2) avspilling,
-           ROUND(casting / Antall, 3) `Andel casting`,
-           ROUND(avspilling / Antall, 2) `Andel avspilling`
+           ROUND(casting / Antall * 100, 2) `Andel casting %`,
+           ROUND(avspilling / Antall * 100, 1) `Andel avspilling %`
       FROM METRIKKER1
      ORDER BY nr
 #+end_src
@@ -380,11 +380,11 @@ Er NRK TV på mobilen bare et verktøy for å spille av innhold på storskjerm? 
 #+RESULTS:
 | benevning        |     Antall |  casting | avspilling | Andel casting | Andel avspilling |
 |------------------+------------+----------+------------+---------------+------------------|
-| besøk            | 10030639.0 | 176263.0 |  6592479.0 |         0.018 |             0.66 |
-| klienter         |  3000407.0 |  57919.0 |  1914681.0 |         0.019 |             0.64 |
-| besøk / klienter |       3.34 |     3.04 |       3.44 |          0.91 |             1.03 |
+| besøk            | 10262374.0 | 178773.0 |  6716330.0 |          1.74 |             65.4 |
+| klienter         |  3044847.0 |  58342.0 |  1930851.0 |          1.92 |             63.4 |
+| besøk / klienter |       3.37 |     3.06 |       3.48 |         90.92 |            103.2 |
 
-I løpet av en syvdagers periode er det kun 1,8 % av besøkene som caster, og 1,9 % av klientene brukes til casting avfærre besøk per klient som går til casting enn totalt antall besøk per klient
+I løpet av en syvdagers periode er det kun 1,7 % av besøkene som caster, og 1,9 % av klientene brukes til casting avfærre besøk per klient som går til casting enn totalt antall besøk per klient
 * Appendix
 I løpet av arbeidet har jeg følt behov for å sortere datane i rekkefølgen av etterfølgende viewId-er. Til dette har jeg brukt en rekursiv spørring.
 #+begin_src bigquery
