@@ -406,23 +406,6 @@ Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
                              df_tp.groupby("platform")["klienter"].sum()).values
 #+end_src
 
-#+begin_src python
-  def tidsplot(df, verdier):      
-      fig, ax = plt.subplots(figsize=(11,7))
-      ax.xaxis.set_major_locator(mdates.HourLocator(range(0, 24, 3)))
-      ax.xaxis.set_minor_locator(mdates.MinuteLocator(range(0, 60, 20)))
-      ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-      plot_df = df.pivot(index="tidspunkt",
-                         columns="platform",
-                         values=verdier)
-      ax.plot(plot_df.index, plot_df.mob, label="mob")
-      ax.plot(plot_df.index, plot_df.tv, label="tv")
-      ax.legend()
-      return (plot_df, ax)
-#+end_src
-
-#+RESULTS:
-: None
 
 #+begin_src python :results graphics file output :file figurer/tidspunkt.png
   pil = dict(arrowstyle="->", facecolor="black")
@@ -532,3 +515,20 @@ I løpet av arbeidet har jeg følt behov for å sortere datane i rekkefølgen av
     FROM VISNINGER
    ORDER BY 2
 #+end_src
+** Hjelpefunksjoner
+#+name:tidsplot
+#+begin_src python
+  def tidsplot(df):      
+      fig, ax = plt.subplots(figsize=(11,7))
+      ax.xaxis.set_major_locator(mdates.HourLocator(range(0, 24, 3)))
+      ax.xaxis.set_minor_locator(mdates.MinuteLocator(range(0, 60, 20)))
+      ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+      plot_df = df.pivot(index=df.columns[0],
+                         columns=df.columns[1],
+                         values=df.columns[2])
+      for k in plot_df.columns:
+          ax.plot(plot_df.index, plot_df[k], label=k)
+      ax.legend()
+      return (ax, plot_df)
+#+end_src
+
