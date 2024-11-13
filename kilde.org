@@ -20,7 +20,7 @@
       (string-match "\\([0-9]+\\)\\.\\([0-9]+\\)" num)
       (let ((hel (match-string 1 num))
   	  (dec (if (string= (match-string 2 num) ".0") "" (match-string 2 num))))
-        (while (string-match "\\(.*[0-9]\\)\\([0-9][0-9][0-9].*\\)" hel)
+        (while (string-match "\\([0-9]+\\)\\([0-9][0-9][0-9].*\\)" hel)
   	(setq hel (concat
   		   (match-string 1 hel) " "
   		   (match-string 2 hel))))
