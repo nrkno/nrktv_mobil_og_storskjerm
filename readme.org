@@ -1,4 +1,4 @@
-# Created 2024-11-06 on. 15:14
+# Created 2024-11-14 to. 10:39
 #+options: date: nil
 #+options: author: nil
 #+options: title: NRK TV på mobil og storskjerm - hånd i hånd
@@ -6,7 +6,7 @@
 #+author: Emil
 #+startup: fold
 #+export_file_name: readme.org
-#+property: header-args:python :session *Python* :tangle kode.py :comments both :eval never-export :exports both
+#+property: header-args:python :session *Python* :tangle kode.py :comments both :eval never-export :exports both :results silent
 #+property: header-args:bigquery :eval never-export :exports both :tangle mobil_og_storskjerm.sql :results table
 * Innledning
 Her skal jeg forsøke å sammenligne bruken av NRK TV på mobil og storskjerm. Hensikten er å gi innsikt i hva NRK TV-appen skal være på mobile enheter. Jeg skal sammenligne
@@ -15,6 +15,9 @@ Her skal jeg forsøke å sammenligne bruken av NRK TV på mobil og storskjerm. H
 - påloggingsandel
 - når på døgnet aktiviteten er
 - hvilken type bruk som er typisk for plattformen
+  - tid brukt på å spille av innhold
+  - andelen fornøyde avspillinger
+  - er mobilen bare en fjernkontroll?
 
 
 Jeg skal også se på
@@ -63,7 +66,7 @@ Det er tilsynelatende sånn at det ikke alltid genereres en ny sessionId når et
 |----------+-----------------+--------------+------------------+---------------------------------|
 | tv       |          423761 |       694399 |             1.64 |                            60.0 |
 | mob      |          185320 |       293798 |             1.59 |                            65.6 |
-
+* Navigasjon
 Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plattformene.
 
 #+name: kum_fordeling
@@ -100,6 +103,9 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
   import pandas as pd
   import matplotlib.pyplot as plt
   from matplotlib.path import Path
+  import matplotlib.dates as mdates
+  from matplotlib.ticker import FixedLocator
+  from matplotlib.dates import DateFormatter
   import numpy as np
   import pandas_gbq
 #+end_src
@@ -138,8 +144,8 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
 #+end_src
 
 #+begin_src python
-  df["mediandiff"] = abs(df.pst - .5)
   df["pst"] = df["kumulativ sum"] / df["Antall besøk"]
+  df["mediandiff"] = abs(df.pst - .5)
   median=df[(df.mediandiff == df.groupby("platform").mediandiff.min().iloc[0]) | (df.mediandiff == df.groupby("platform").mediandiff.min().iloc[1])][["platform","skjermvisninger","pst"]].set_index("platform")
 #+end_src
 
@@ -152,8 +158,623 @@ Nå skal jeg se om det er noen forskjell i hvor mye det navigeres på de to plat
   ax.annotate("Etter to skjermvisninger er det en større\nandel påloggede enn ikke-påloggede.", xy=(2,.26), xytext=(10,.26), arrowprops=dict(arrowstyle="->", facecolor="black"))
   ax.annotate(f"For mob er det ca. {round(1 - median.loc["mob"].pst, 3) * 100} % som har {int(median.loc["mob"].skjermvisninger)} eller flere skjermvisninger,\nmens det på tv er ca. {round(1 - median.loc["tv"].pst, 3) * 100} % som har {int(median.loc["tv"].skjermvisninger)} eller flere skjermvisninger.\nDet betyr at det navigeres litt mer på mobil enn på tv.", xy=(median.loc["mob"].skjermvisninger, median.loc["mob"].pst), xytext=(10,.6), arrowprops=dict(arrowstyle="->", facecolor="black"))
   df.pivot(index="skjermvisninger", columns=["platform","pålogget besøk"], values="pst").plot(ax=ax, marker="o")
-  plt.show()
 #+end_src
 
 
 [[file:figurer/navigasjonslengde.png]]
+** Navigasjonsmønstre
+Jeg går videre med å finne ut hva de vanligste navigasjonsmønstrne er på de ulike plattformene. Til dette tar jeg utgangspunkt i en spørring jeg har fra arbeidet med direktesidene.
+
+#+name: navigasjon
+#+begin_src sql
+  WITH
+    VISNING AS (
+      SELECT DISTINCT viewId, previousViewId, nrkUserId IS NOT NULL `pålogget`,
+             userOrProfile, platform, appId,
+             IF(appId IN ('no.nrk.tv.smart-tv', 'no.nrk.tv.web'),
+               CASE
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'direkte'
+                   AND SPLIT(page.path, '/')[SAFE_OFFSET(3)] = 'avspiller' THEN 
+                   CASE -- Deler opp tilfellene der vi skal ha med kanal
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(2)] LIKE 'nrk1_%'
+                       THEN 'avspiller (nrk1)'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(2)], r'^nrk(s.+|_|tv\d|\d)+')
+                       THEN CONCAT('avspiller (', SPLIT(page.path, '/')[SAFE_OFFSET(2)] , ')')
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'direkte' THEN 
+                   CASE
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(2)] LIKE 'nrk1_%' THEN 'direkte (nrk1)'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(2)], r'^nrk(s.+|_|tv\d|\d)+')
+                       THEN CONCAT('direkte (', SPLIT(page.path, '/')[SAFE_OFFSET(2)] , ')')
+                     ELSE 'direkte'
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'epg' THEN 
+                   CASE
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(2)] LIKE 'nrk1_%' THEN 'tv-guide (nrk1)'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(2)], r'^nrk(s.+|_|tv\d|\d)+')
+                       THEN CONCAT('tv-guide (', SPLIT(page.path, '/')[SAFE_OFFSET(2)] , ')')
+                     ELSE 'tv-guide'
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] != '' THEN 
+                   CASE
+                     WHEN REGEXP_CONTAINS(page.path, r'mitt-?innhold') THEN 'mitt innhold'
+                     WHEN REGEXP_CONTAINS(page.path, r'chromecast') THEN 'chromecast-remote'
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'search'
+                       OR SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'sok' THEN 'søk'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'logg?-')
+                       OR REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'profil')
+                       OR REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'sales-')
+                       OR REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'avatar')
+                       THEN 'innsalg, pålogging og profiladmin'
+                     ELSE SPLIT(page.path, '/')[SAFE_OFFSET(1)]
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = '' THEN 'forsiden'
+                 ELSE page.path
+               END,
+               CONCAT(
+                 CASE
+                   WHEN mobileViewName = 'frontpage' THEN 'forsiden'
+                   WHEN SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] = 'live'
+                     THEN CONCAT('direkte (', SPLIT(mobileViewName, '/')[SAFE_OFFSET(1)], ')')
+                   WHEN SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] = 'category' THEN 'kategori'
+                   WHEN mobileViewName = 'categories' THEN 'kategorier'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'chromecast') THEN 'chromecast-remote'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'logg?-')
+                     OR REGEXP_CONTAINS(mobileViewName, r'profil')
+                     OR REGEXP_CONTAINS(mobileViewName, r'sales-')
+                     OR REGEXP_CONTAINS(mobileViewName, r'avatar')
+                     THEN 'innsalg, pålogging og profiladmin'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'mitt-?innhold')
+                     OR mobileViewName = 'myContent' THEN 'mitt innhold'
+                   WHEN mobileViewName = 'player' THEN 'avspiller'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'search|sok') THEN 'søk'
+                   WHEN SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] IS NOT NULL
+                     THEN IF(SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] = 'series',
+                             'serier', SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)])
+                  ELSE mobileViewName
+                 END,
+                 CASE
+                   WHEN content.id LIKE 'nrk1_%' THEN ' (nrk1)'
+                   WHEN REGEXP_CONTAINS(content.id, r'^nrk(_|tv\d|\d)+')
+                     THEN CONCAT(' (', content.id, ')')
+                   ELSE ''
+                 END)
+             ) skjerm,
+             inntrykk, IFNULL(klikk, 0) klikk, visitorId,
+             sessionId, firstTimeStamp, p.secondsConsumed,
+             COUNTIF(previousViewId IS NULL) OVER(PARTITION BY sessionId ORDER BY firstTimeStamp) sub_sesjon,
+             COUNT(DISTINCT sessionId) antall
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+             LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+             LEFT JOIN (
+               SELECT viewId, secondsConsumed
+                 FROM `nrk-datahub.snowplow_processed.playback_v02`
+                WHERE partitionDate = CURRENT_DATE - 2
+                  AND nrkService = 'nrktv') p USING(viewId)
+             LEFT JOIN (
+               SELECT viewId,
+                      COUNT(DISTINCT plugOrLinkTitle) inntrykk,
+                      COUNT(DISTINCT IF(clicked IS NOT NULL, plugOrLinkTitle, NULL)) klikk
+                 FROM `nrk-datahub.snowplow_processed.impressions_v02`
+                WHERE partitionDate = CURRENT_DATE - 2
+                  AND nrkService = 'nrktv' GROUP BY ALL) i USING(viewId)
+       WHERE partitionDate = CURRENT_DATE - 2
+         AND nrkService = 'nrktv'
+         AND platform IN ('mob', 'tv')
+         GROUP BY ALL),
+
+    STIER AS (
+      SELECT platform, v1.sessionId, v1.visitorId,
+             TIME(TIMESTAMP_SECONDS(
+               CAST(
+                 FLOOR(UNIX_SECONDS(firstTimeStamp) / 1200)
+                 ,* 1200 AS INT64)), 'Europe/Oslo') tidspunkt,
+             userOrProfile,
+             v1.skjerm visning1,
+             v2.skjerm visning2,
+             v3.skjerm visning3, 
+             IF(LOGICAL_OR(`pålogget`) OVER(PARTITION BY v1.sessionId, v1.sub_sesjon),
+                userOrProfile, 'nei') `pålogget besøk`,
+             IFNULL(v1.secondsConsumed, 0) +
+               IFNULL(v2.secondsConsumed, 0) +
+               IFNULL(v3.secondsConsumed, 0) secondsConsumed,
+             IFNULL(v1.inntrykk, 0) +
+               IFNULL(v2.inntrykk, 0) +
+               IFNULL(v3.inntrykk, 0) inntrykk,
+             IFNULL(v1.klikk, 0) + IFNULL(v2.klikk, 0) + IFNULL(v3.klikk, 0) klikk,
+        FROM VISNING v1
+             LEFT JOIN (
+               SELECT sessionId, viewId, sub_sesjon,
+                      previousViewId, skjerm, inntrykk,
+                      klikk, secondsConsumed
+                 FROM VISNING) v2 ON v1.viewId = v2.previousViewId
+                         AND v1.sub_sesjon = v2.sub_sesjon
+                         AND v1.sessionId = v2.sessionId
+             LEFT JOIN (
+               SELECT sessionId, viewId, sub_sesjon,
+                      previousViewId, skjerm, inntrykk,
+                      klikk, secondsConsumed
+                 FROM VISNING) v3 ON v2.viewId = v3.previousViewId
+                         AND v2.sub_sesjon = v3.sub_sesjon
+                         AND v2.sessionId = v3.sessionId
+    ),
+
+    AGG AS (
+      SELECT platform, tidspunkt, `pålogget besøk`,
+             CONCAT(visning1, ' > ', visning2, ' > ', visning3) sti,
+             SUM(secondsConsumed) `Totalt konsum`,
+             SUM(inntrykk) `Totalt inntrykk`,
+             SUM(klikk) `Totalt klikk`,
+             COUNT(*) Antall,
+             COUNT(DISTINCT sessionId) `Besøk`,
+             COUNT(DISTINCT visitorId) klienter
+        FROM STIER	     
+       WHERE visning2 IS NOT NULL
+         AND visning3 IS NOT NULL
+       GROUP BY ALL
+    ),
+
+    RANGERING AS (
+      SELECT *,
+             SUM(Antall) OVER(PARTITION BY platform, tidspunkt, `pålogget besøk`) `Totalt antall`,
+             ROW_NUMBER() OVER(PARTITION BY platform, tidspunkt, `pålogget besøk`
+                               ORDER BY Antall DESC) rang
+        FROM AGG
+      )
+
+    SELECT *
+      FROM RANGERING
+     WHERE rang < 6
+     ORDER BY platform, tidspunkt, `pålogget besøk`, rang
+#+end_src
+
+#+begin_src python
+  spørring = """
+  WITH
+    VISNING AS (
+      SELECT DISTINCT viewId, previousViewId, nrkUserId IS NOT NULL `pålogget`,
+             userOrProfile, platform, appId,
+             IF(appId IN ('no.nrk.tv.smart-tv', 'no.nrk.tv.web'),
+               CASE
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'direkte'
+                   AND SPLIT(page.path, '/')[SAFE_OFFSET(3)] = 'avspiller' THEN 
+                   CASE -- Deler opp tilfellene der vi skal ha med kanal
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(2)] LIKE 'nrk1_%'
+                       THEN 'avspiller (nrk1)'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(2)], r'^nrk(s.+|_|tv\d|\d)+')
+                       THEN CONCAT('avspiller (', SPLIT(page.path, '/')[SAFE_OFFSET(2)] , ')')
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'direkte' THEN 
+                   CASE
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(2)] LIKE 'nrk1_%' THEN 'direkte (nrk1)'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(2)], r'^nrk(s.+|_|tv\d|\d)+')
+                       THEN CONCAT('direkte (', SPLIT(page.path, '/')[SAFE_OFFSET(2)] , ')')
+                     ELSE 'direkte'
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'epg' THEN 
+                   CASE
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(2)] LIKE 'nrk1_%' THEN 'tv-guide (nrk1)'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(2)], r'^nrk(s.+|_|tv\d|\d)+')
+                       THEN CONCAT('tv-guide (', SPLIT(page.path, '/')[SAFE_OFFSET(2)] , ')')
+                     ELSE 'tv-guide'
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] != '' THEN 
+                   CASE
+                     WHEN REGEXP_CONTAINS(page.path, r'mitt-?innhold') THEN 'mitt innhold'
+                     WHEN REGEXP_CONTAINS(page.path, r'chromecast') THEN 'chromecast-remote'
+                     WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'search'
+                       OR SPLIT(page.path, '/')[SAFE_OFFSET(1)] = 'sok' THEN 'søk'
+                     WHEN REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'logg?-')
+                       OR REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'profil')
+                       OR REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'sales-')
+                       OR REGEXP_CONTAINS(SPLIT(page.path, '/')[SAFE_OFFSET(1)], r'avatar')
+                       THEN 'innsalg, pålogging og profiladmin'
+                     ELSE SPLIT(page.path, '/')[SAFE_OFFSET(1)]
+                   END
+                 WHEN SPLIT(page.path, '/')[SAFE_OFFSET(1)] = '' THEN 'forsiden'
+                 ELSE page.path
+               END,
+               CONCAT(
+                 CASE
+                   WHEN mobileViewName = 'frontpage' THEN 'forsiden'
+                   WHEN SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] = 'live'
+                     THEN CONCAT('direkte (', SPLIT(mobileViewName, '/')[SAFE_OFFSET(1)], ')')
+                   WHEN SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] = 'category' THEN 'kategori'
+                   WHEN mobileViewName = 'categories' THEN 'kategorier'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'chromecast') THEN 'chromecast-remote'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'logg?-')
+                     OR REGEXP_CONTAINS(mobileViewName, r'profil')
+                     OR REGEXP_CONTAINS(mobileViewName, r'sales-')
+                     OR REGEXP_CONTAINS(mobileViewName, r'avatar')
+                     THEN 'innsalg, pålogging og profiladmin'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'mitt-?innhold')
+                     OR mobileViewName = 'myContent' THEN 'mitt innhold'
+                   WHEN mobileViewName = 'player' THEN 'avspiller'
+                   WHEN REGEXP_CONTAINS(mobileViewName, r'search|sok') THEN 'søk'
+                   WHEN SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] IS NOT NULL
+                     THEN IF(SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)] = 'series',
+                             'serier', SPLIT(mobileViewName, '/')[SAFE_OFFSET(0)])
+                  ELSE mobileViewName
+                 END,
+                 CASE
+                   WHEN content.id LIKE 'nrk1_%' THEN ' (nrk1)'
+                   WHEN REGEXP_CONTAINS(content.id, r'^nrk(_|tv\d|\d)+')
+                     THEN CONCAT(' (', content.id, ')')
+                   ELSE ''
+                 END)
+             ) skjerm,
+             inntrykk, IFNULL(klikk, 0) klikk, visitorId,
+             sessionId, firstTimeStamp, p.secondsConsumed,
+             COUNTIF(previousViewId IS NULL) OVER(PARTITION BY sessionId ORDER BY firstTimeStamp) sub_sesjon,
+             COUNT(DISTINCT sessionId) antall
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+             LEFT JOIN `nrk-datahub.prod.registered_users_v01` USING(nrkUserId)
+             LEFT JOIN (
+               SELECT viewId, secondsConsumed
+                 FROM `nrk-datahub.snowplow_processed.playback_v02`
+                WHERE partitionDate = CURRENT_DATE - 2
+                  AND nrkService = 'nrktv') p USING(viewId)
+             LEFT JOIN (
+               SELECT viewId,
+                      COUNT(DISTINCT plugOrLinkTitle) inntrykk,
+                      COUNT(DISTINCT IF(clicked IS NOT NULL, plugOrLinkTitle, NULL)) klikk
+                 FROM `nrk-datahub.snowplow_processed.impressions_v02`
+                WHERE partitionDate = CURRENT_DATE - 2
+                  AND nrkService = 'nrktv' GROUP BY ALL) i USING(viewId)
+       WHERE partitionDate = CURRENT_DATE - 2
+         AND nrkService = 'nrktv'
+         AND platform IN ('mob', 'tv')
+         GROUP BY ALL),
+
+    STIER AS (
+      SELECT platform, v1.sessionId, v1.visitorId,
+             TIME(TIMESTAMP_SECONDS(
+               CAST(
+                 FLOOR(UNIX_SECONDS(firstTimeStamp) / 1200)
+                 ,* 1200 AS INT64)), 'Europe/Oslo') tidspunkt,
+             userOrProfile,
+             v1.skjerm visning1,
+             v2.skjerm visning2,
+             v3.skjerm visning3, 
+             IF(LOGICAL_OR(`pålogget`) OVER(PARTITION BY v1.sessionId, v1.sub_sesjon),
+                userOrProfile, 'nei') `pålogget besøk`,
+             IFNULL(v1.secondsConsumed, 0) +
+               IFNULL(v2.secondsConsumed, 0) +
+               IFNULL(v3.secondsConsumed, 0) secondsConsumed,
+             IFNULL(v1.inntrykk, 0) +
+               IFNULL(v2.inntrykk, 0) +
+               IFNULL(v3.inntrykk, 0) inntrykk,
+             IFNULL(v1.klikk, 0) + IFNULL(v2.klikk, 0) + IFNULL(v3.klikk, 0) klikk,
+        FROM VISNING v1
+             LEFT JOIN (
+               SELECT sessionId, viewId, sub_sesjon,
+                      previousViewId, skjerm, inntrykk,
+                      klikk, secondsConsumed
+                 FROM VISNING) v2 ON v1.viewId = v2.previousViewId
+                         AND v1.sub_sesjon = v2.sub_sesjon
+                         AND v1.sessionId = v2.sessionId
+             LEFT JOIN (
+               SELECT sessionId, viewId, sub_sesjon,
+                      previousViewId, skjerm, inntrykk,
+                      klikk, secondsConsumed
+                 FROM VISNING) v3 ON v2.viewId = v3.previousViewId
+                         AND v2.sub_sesjon = v3.sub_sesjon
+                         AND v2.sessionId = v3.sessionId
+    ),
+
+    AGG AS (
+      SELECT platform, tidspunkt, `pålogget besøk`,
+             CONCAT(visning1, ' > ', visning2, ' > ', visning3) sti,
+             SUM(secondsConsumed) `Totalt konsum`,
+             SUM(inntrykk) `Totalt inntrykk`,
+             SUM(klikk) `Totalt klikk`,
+             COUNT(*) Antall,
+             COUNT(DISTINCT sessionId) `Besøk`,
+             COUNT(DISTINCT visitorId) klienter
+        FROM STIER	     
+       WHERE visning2 IS NOT NULL
+         AND visning3 IS NOT NULL
+       GROUP BY ALL
+    ),
+
+    RANGERING AS (
+      SELECT *,
+             SUM(Antall) OVER(PARTITION BY platform, tidspunkt, `pålogget besøk`) `Totalt antall`,
+             ROW_NUMBER() OVER(PARTITION BY platform, tidspunkt, `pålogget besøk`
+                               ORDER BY Antall DESC) rang
+        FROM AGG
+      )
+
+    SELECT *
+      FROM RANGERING
+     WHERE rang < 6
+     ORDER BY platform, tidspunkt, `pålogget besøk`, rang
+  """
+
+  df_nav = pandas_gbq.read_gbq(spørring)
+  df_nav["tidspunkt"] = pd.to_datetime(df_nav.tidspunkt, format="%H:%M:%S")
+#+end_src
+
+Jeg ser først på hvilke stier som er vanligst og når de er vanligst.
+
+#+begin_src python
+  topp_stier = df_nav[["sti", "Antall"]].groupby("sti").sum().sort_values(by="Antall", ascending=False).index[:10]
+  plot_df = df_nav.loc[df_nav.sti.isin(topp_stier),["tidspunkt","sti","Antall"]].groupby(["tidspunkt","sti"]).sum("Antall").reset_index()
+  ax,_ = tidsplot(plot_df)
+  ax.set_title("Topp ti vanligste navigasjonsstier gjennom døgnet")
+#+end_src
+
+
+*************** TODO Dykke dypere i avspiller-stier
+
+#+begin_src python
+  plot_df = df_nav[["tidspunkt","platform","pålogget besøk","Antall"]].groupby(["tidspunkt","platform","pålogget besøk"]).sum("Antall").reset_index().pivot(index="tidspunkt",columns=["platform","pålogget besøk"],values="Antall")
+  fig,ax=plt.subplots(figsize=(11,9))
+  for k in pdf.columns:
+      ax.plot(pdf.index,pdf[k], label=k)
+
+  ax.legend()
+#+end_src
+#+begin_src python
+  fig, (ax, ax2) = plt.subplots(2, 1)
+  ax.set_title('click on point to plot time series')
+  line, = ax.plot(xs, ys, 'o', picker=True, pickradius=5)
+
+  browser = PointBrowser()
+
+  fig.canvas.mpl_connect('pick_event', browser.on_pick)
+  fig.canvas.mpl_connect('key_press_event', browser.on_press)
+
+  plt.show()
+#+end_src
+* Aktivitetsmønster
+Det neste jeg skal undersøke er aktivitet i løpet av døgnet.
+
+#+name: tidspunkt
+#+begin_src sql
+    #standardSQL
+  SELECT platform,
+         TIME(EXTRACT(HOUR FROM TIME(timeFrame, 'Europe/Oslo')),
+              CAST(20 * FLOOR(
+                   EXTRACT(MINUTE FROM TIME(timeFrame, 'Europe/Oslo')) / 20) AS INT64),
+              0) tidspunkt,
+         HLL_COUNT.MERGE(visitorsSketch) klienter
+    FROM `nrk-datahub.snowplow_aggregate.views_5min_v01`
+   WHERE partitionDate = CURRENT_DATE - 1
+     AND nrkService = 'nrktv'
+     AND platform IN ('mob','tv')
+   GROUP BY ALL
+   ORDER BY 1, 2
+#+end_src
+
+#+begin_src python
+  spørring = """
+    #standardSQL
+  SELECT platform,
+         TIME(EXTRACT(HOUR FROM TIME(timeFrame, 'Europe/Oslo')),
+              CAST(20 * FLOOR(
+                   EXTRACT(MINUTE FROM TIME(timeFrame, 'Europe/Oslo')) / 20) AS INT64),
+              0) tidspunkt,
+         HLL_COUNT.MERGE(visitorsSketch) klienter
+    FROM `nrk-datahub.snowplow_aggregate.views_5min_v01`
+   WHERE partitionDate = CURRENT_DATE - 1
+     AND nrkService = 'nrktv'
+     AND platform IN ('mob','tv')
+   GROUP BY ALL
+   ORDER BY 1, 2
+  """
+
+  df_tp = pandas_gbq.read_gbq(spørring)
+  df_tp["tidspunkt"] = pd.to_datetime(df_tp.tidspunkt, format="%H:%M:%S")
+  df_tp["andel_klienter"] = (df_tp.set_index("platform")["klienter"] /
+                             df_tp.groupby("platform")["klienter"].sum()).values
+#+end_src
+
+
+#+begin_src python
+  pil = dict(arrowstyle="->", facecolor="black")
+  plot_df, ax = tidsplot(df_tp, "klienter")
+  ax.set_title("Antall klienter gjennom døgnet i 20 minutters intervaller")
+  ax.annotate(f"Mellom kl. {plot_df[plot_df.mob>plot_df.tv].index.min().strftime("%H:%M")} og kl. {plot_df[plot_df.mob>plot_df.tv].index.max().strftime("%H:%M")}\ner det flere besøk fra mob-klienter\nenn tv-klienter.",
+              xy=(plot_df[plot_df.mob>plot_df.tv].index.min(),plot_df.loc[plot_df[plot_df.mob>plot_df.tv].index.min()].mob),
+              xytext=(pd.to_datetime("01:00", format="%H:%M"), 30000), arrowprops=pil)
+#+end_src
+
+
+[[file:figurer/tidspunkt.png]]
+
+#+begin_src python
+  ax = tidsplot(df_tp, "andel_klienter")
+  ax.set_title("Fordeling av klienter gjennom døgnet i 20 minutters intervaller")
+#+end_src
+
+
+[[file:figurer/tidspunkt_andeler.png]]
+* Mobilen som fjernkontroll
+Er NRK TV på mobilen bare et verktøy for å spille av innhold på storskjerm? Fungerer egentlig mobilen bare som en fjernkontroll for NRK TV? La meg finne det ut. Denne spørringen gir tall for de siste syv dagene.
+
+#+begin_src sql
+  #standardSQL
+  WITH
+    GRUNNLAG AS (
+      SELECT sessionId, visitorId,
+             CASE
+               WHEN mobileViewName = 'chromecastRemote' THEN 'cast'
+               WHEN avspilling THEN 'avspilling'
+             END type
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+             LEFT JOIN (SELECT viewId, true avspilling
+                          FROM `nrk-datahub.snowplow_processed.playback_v02`
+                         WHERE partitionDate >= CURRENT_DATE - 7
+                           AND nrkService = 'nrktv') USING(viewId)
+       WHERE partitionDate >= CURRENT_DATE - 7
+         AND nrkService = 'nrktv'),
+
+    METRIKKER1 AS (
+      SELECT 1 nr, 'besøk' benevning,
+             COUNT(DISTINCT sessionId) Antall,
+             COUNT(DISTINCT IF(type = 'cast', sessionId, NULL)) casting,
+             COUNT(DISTINCT IF(type = 'avspilling', sessionId, NULL)) avspilling, 
+        FROM GRUNNLAG
+       UNION ALL
+      SELECT 2, 'klienter',
+             COUNT(DISTINCT visitorId),
+             COUNT(DISTINCT IF(type = 'cast', visitorId, NULL)),
+             COUNT(DISTINCT IF(type = 'avspilling', visitorId, NULL))
+        FROM GRUNNLAG
+       UNION ALL
+      SELECT 3, 'besøk / klienter',
+             COUNT(DISTINCT sessionId) / COUNT(DISTINCT visitorId),
+             COUNT(DISTINCT IF(type = 'cast', sessionId, NULL)) /
+               COUNT(DISTINCT IF(type = 'cast', visitorId, NULL)),
+             COUNT(DISTINCT IF(type = 'avspilling', sessionId, NULL)) /
+               COUNT(DISTINCT IF(type = 'avspilling', visitorId, NULL))
+        FROM GRUNNLAG)
+
+    SELECT benevning, ROUND(Antall, 2) Antall,
+           ROUND(casting, 2) casting,
+           ROUND(avspilling, 2) avspilling,
+           ROUND(casting / Antall * 100, 2) `Andel casting %`,
+           ROUND(avspilling / Antall * 100, 1) `Andel avspilling %`
+      FROM METRIKKER1
+     ORDER BY nr
+#+end_src
+
+
+| benevning        |     Antall |  casting | avspilling | Andel casting | Andel avspilling |
+|------------------+------------+----------+------------+---------------+------------------|
+| besøk            | 10262374.0 | 178773.0 |  6716330.0 |          1.74 |             65.4 |
+| klienter         |  3044847.0 |  58342.0 |  1930851.0 |          1.92 |             63.4 |
+| besøk / klienter |       3.37 |     3.06 |       3.48 |         90.92 |            103.2 |
+
+I løpet av en syvdagers periode er det kun 1,7 % av besøkene som caster, og 1,9 % av klientene brukes til casting avfærre besøk per klient som går til casting enn totalt antall besøk per klient
+* Appendix
+I løpet av arbeidet har jeg følt behov for å sortere datane i rekkefølgen av etterfølgende viewId-er. Til dette har jeg brukt en rekursiv spørring.
+#+begin_src sql
+  WITH RECURSIVE
+    EKSEMPELDATA AS (
+      -- SELECT DISTINCT view.id visning, view.previousId forrige_visning
+      --   FROM `nrk-datahub.snowplow_processed.events_v03`
+      -- WHERE partitionDate = CURRENT_DATE - 2
+      --   AND nrkService = 'nrktv'
+      --   AND session.id = '000001c6-8b17-4465-abf7-8fccede1a2f5'
+      --   AND view.previousId IS NOT NULL
+      SELECT viewId visning, previousViewId forrige_visning, mobileViewName,
+        FROM `nrk-datahub.snowplow_processed.views_v02`
+       WHERE partitionDate = CURRENT_DATE - 2
+         AND sessionId IN ('e338d8a9-8609-446a-88b7-62102a448c6c', '000001c6-8b17-4465-abf7-8fccede1a2f5')
+         AND nrkService = 'nrktv'
+    ),
+
+    VISNINGER AS (
+      (SELECT visning visningsid, 1 visningsnummer, mobileViewName FROM EKSEMPELDATA WHERE forrige_visning = '69B376A7-D292-402A-8734-190A409D2EF4')
+      UNION ALL
+      (SELECT visning, visningsnummer + 1 visningsnummer, e.mobileViewName
+         FROM VISNINGER v
+              JOIN EKSEMPELDATA e ON (v.visningsid = e.forrige_visning))
+    )
+
+  SELECT *
+    FROM VISNINGER
+   ORDER BY 2
+#+end_src
+** Hjelpefunksjoner
+#+name: tidsplot
+#+begin_src python
+  def tidsplot(df):      
+      fig, ax = plt.subplots(figsize=(11,7))
+      ax.xaxis.set_major_locator(mdates.HourLocator(range(0, 24, 3)))
+      ax.xaxis.set_minor_locator(mdates.MinuteLocator(range(0, 60, 20)))
+      ax.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+      plot_df = df.pivot(index=df.columns[0],
+                         columns=df.columns[1],
+                         values=df.columns[2])
+      for k in plot_df.columns:
+          ax.plot(plot_df.index, plot_df[k], label=k)
+      ax.legend()
+      return (ax, plot_df)
+#+end_src
+* Testing
+#+begin_src python
+  class PointBrowser:
+      """
+      Click on a point to select and highlight it -- the data that
+      generated the point will be shown in the lower Axes.  Use the 'n'
+      and 'p' keys to browse through the next and previous points
+      """
+
+      def __init__(self):
+          self.lastind = 0
+
+          self.text = ax.text(0.05, 0.95, 'selected: none',
+                              transform=ax.transAxes, va='top')
+          self.selected, = ax.plot([xs[0]], [ys[0]], 'o', ms=12, alpha=0.4,
+                                   color='yellow', visible=False)
+
+      def on_press(self, event):
+          if self.lastind is None:
+              return
+          if event.key not in ('n', 'p'):
+              return
+          if event.key == 'n':
+              inc = 1
+          else:
+              inc = -1
+
+          self.lastind += inc
+          self.lastind = np.clip(self.lastind, 0, len(xs) - 1)
+          self.update()
+
+      def on_pick(self, event):
+          if event.artist != line:
+              return True
+
+          N = len(event.ind)
+          if not N:
+              return True
+
+          # the click locations
+          x = event.mouseevent.xdata
+          y = event.mouseevent.ydata
+
+          distances = np.hypot(x - xs[event.ind], y - ys[event.ind])
+          indmin = distances.argmin()
+          dataind = event.ind[indmin]
+
+          self.lastind = dataind
+          self.update()
+
+      def update(self):
+          if self.lastind is None:
+              return
+
+          dataind = self.lastind
+
+          ax2.clear()
+          ax2.plot(X[dataind])
+
+          ax2.text(0.05, 0.9, f'mu={xs[dataind]:1.3f}\nsigma={ys[dataind]:1.3f}',
+                   transform=ax2.transAxes, va='top')
+
+          ax2.set_ylim(-0.5, 1.5)
+
+          self.selected.set_visible(True)
+
+          self.x = np.arange(-0.5,1.5,0.05)
+          self.y = np.exp(-(self.x-xs[dataind])**2/(2*ys[dataind]**2))/np.sqrt(2*np.pi*ys[dataind]**2)
+          self.selected.set_data(self.x, self.y)
+
+          self.text.set_text('selected: %d' % dataind)
+          fig.canvas.draw()
+#+end_src
+#+begin_src python
+  if __name__ == '__main__':
+      import matplotlib.pyplot as plt
+
+      # Fixing random state for reproducibility
+      np.random.seed(19680801)
+
+      X = np.random.rand(100, 200)
+      xs = np.mean(X, axis=1)
+      ys = np.std(X, axis=1)
+#+end_src
